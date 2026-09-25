@@ -1,0 +1,14 @@
+node_modules/
+settings.json
+*.dpapi
+.env
+.env.*
+!.env.example
+.local/
+cache/
+runs/
+artifacts/
+*.jsonl
+*.log
+*.tmp
+fixtures/generated/

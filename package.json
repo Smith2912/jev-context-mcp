@@ -1,0 +1,15 @@
+{
+  "name": "jev-context-mcp",
+  "version": "0.10.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test.mjs evidence.test.mjs router.test.mjs cache.test.mjs usage-report.test.mjs hook-output.test.mjs compact-context.test.mjs workflow.test.mjs benchmark-control.test.mjs workflow-controller.test.mjs workflow-controller-stdio.test.mjs native-routed-runner.test.mjs computer-use-helper.test.mjs failure-bridge.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "js-tiktoken": "1.0.21",
+    "zod": "4.6.5"
+  }
+}

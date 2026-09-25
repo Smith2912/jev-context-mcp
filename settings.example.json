@@ -1,0 +1,12 @@
+{
+  "usageLedger": null,
+  "cacheDirectory": null,
+  "contextRoots": [],
+  "allowedRoots": [],
+  "refreshSkillCatalog": false,
+  "workflow": {
+    "enabled": false,
+    "batchSchedulerEnabled": false,
+    "registrations": {}
+  }
+}

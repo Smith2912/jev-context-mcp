@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "quality": {"type": "string", "enum": ["acceptable", "unacceptable"]},
+    "seriousDefects": {"type": "array", "items": {"type": "string"}},
+    "missingEvidence": {"type": "array", "items": {"type": "string"}},
+    "summary": {"type": "string"}
+  },
+  "required": ["quality", "seriousDefects", "missingEvidence", "summary"],
+  "additionalProperties": false
+}
