@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {validateRegisteredImages} from './native-safety.mjs';
 
 const routedModels=new Map([
   ['gpt-5.6-luna',new Set(['low'])],
@@ -35,7 +36,7 @@ export function nativeRoutePrompt(request){
  const envelope=mode==='structured-edit'
   ?`Produce one complete structured edit response. Builder limit: ${limits.builder.maxRequests} model request(s), ${limits.builder.maxToolCalls} tool call(s), ${limits.builder.maxRawTokens} raw Codex tokens. Registered tests and a bounded reviewer follow.`
   :`Builder mode: ${mode}. Builder limit: ${limits.builder.maxRequests} model request(s), ${limits.builder.maxToolCalls} tool call(s), ${limits.builder.maxRawTokens} raw Codex tokens. Registered tests and a bounded reviewer follow.`;
- return `${bounded(request.contract,3500)}\n\nExecution envelope: ${envelope}`;
+ return `${bounded(request.contract,3500)}\n\nExecution envelope: ${envelope} Request/token values are accounting ceilings unless the executor supports hard spending limits; they are not a promise of pre-request enforcement.`;
 }
 
 function enforceCompletedLimits(kind,result,limits){
@@ -75,14 +76,7 @@ function parseReview(text){
  if(typeof quality!=='boolean'||!Array.isArray(value.seriousDefects)||!Array.isArray(value.missingEvidence)||value.seriousDefects.some(x=>typeof x!=='string')||value.missingEvidence.some(x=>typeof x!=='string'))throw Error('Reviewer JSON does not match the required evidence schema');
  return {qualityAcceptable:quality,seriousDefects:value.seriousDefects.slice(0,8).map(x=>x.slice(0,500)),missingEvidence:value.missingEvidence.slice(0,8).map(x=>x.slice(0,500)),summary:bounded(value.summary,1000)};
 }
-function normalizedFile(value){return path.resolve(value).replaceAll('\\','/').toLowerCase();}
-function registeredImages(value,workingDirectory){
- if(value===undefined)return [];
- if(!Array.isArray(value)||value.length>8)throw Error('Registered images must be a bounded array');
- const root=path.resolve(workingDirectory),seen=new Set(),images=[];
- for(const file of value){if(typeof file!=='string'||!path.isAbsolute(file)||!/\.(?:png|jpe?g|webp|gif)$/i.test(file))throw Error('Registered image path is invalid');const absolute=path.resolve(file),relative=path.relative(root,absolute),key=normalizedFile(absolute);if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative)||seen.has(key))throw Error('Registered image escapes the working directory or is duplicated');seen.add(key);images.push(absolute);}
- return images;
-}
+function normalizedFile(value){return path.resolve(value);}
 function parseStructuredEdit(text){
  const raw=bounded(text,260000).trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');let value;
  try{value=JSON.parse(raw);}catch{throw Error('Structured builder did not return valid JSON');}
@@ -97,18 +91,19 @@ function parseStructuredEdit(text){
 }
 export async function applyStructuredEdit({text,evidence,workingDirectory,allowedFiles}){
  if(!Array.isArray(allowedFiles)||allowedFiles.length<1||allowedFiles.length>4||allowedFiles.some(file=>typeof file!=='string')||new Set(allowedFiles.map(normalizedFile)).size!==allowedFiles.length)throw Error('One to four unique registered structured-edit files are required');
- const root=await fs.realpath(workingDirectory),allowed=new Set(allowedFiles.map(normalizedFile));
+ const root=await fs.realpath(workingDirectory),allowed=new Set(await Promise.all(allowedFiles.map(file=>fs.realpath(file))));
+ if(allowed.size!==allowedFiles.length)throw Error('Registered structured-edit files resolve to duplicate identities');
  const selected=(evidence||[]).filter(item=>item?.builderVisible!==false&&item?.mandatory===true&&typeof item.file==='string'&&typeof item.sha256==='string');
- const registrations=new Map(selected.filter(item=>allowed.has(normalizedFile(item.file))).map(item=>[normalizedFile(item.file),item]));
+ const registrations=new Map();for(const item of selected){const target=await fs.realpath(item.file);if(allowed.has(target))registrations.set(target,item);}
  if(registrations.size!==allowed.size)throw Error('Structured-edit files are not present in mandatory evidence');
- const {edits,summary}=parseStructuredEdit(text),editKeys=new Set(edits.map(edit=>normalizedFile(edit.file)));
+ const {edits,summary}=parseStructuredEdit(text),targets=await Promise.all(edits.map(edit=>fs.realpath(edit.file))),editKeys=new Set(targets);
  if(editKeys.size!==allowed.size||[...allowed].some(file=>!editKeys.has(file)))throw Error('Structured builder did not return every registered file exactly once');
  const transaction=[];
- for(const edit of edits){
-  const key=normalizedFile(edit.file),registered=registrations.get(key);
+ for(const [index,edit] of edits.entries()){
+  const key=targets[index],registered=registrations.get(key);
   if(!registered||edit.expectedSha256!==registered.sha256)throw Error('Structured builder selected an unregistered or stale file');
   const target=await fs.realpath(edit.file),relative=path.relative(root,target);
-  if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative)||normalizedFile(target)!==key)throw Error('Structured edit escapes the registered working directory');
+  if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative)||target!==key)throw Error('Structured edit escapes the registered working directory');
   const before=await fs.readFile(target),beforeHash=bytesHash(before);
   if(beforeHash!==registered.sha256)throw Error('Structured edit source changed before application');
   const next=Buffer.from(edit.content,'utf8'),afterHash=bytesHash(next);
@@ -155,7 +150,7 @@ export async function runNativeRoutedWorkflow(request,deps){
  const routingMode=request.routingMode??'jev',builderMode=request.builderMode??'packet';
  if(!['jev','fixed'].includes(routingMode))throw Error('Unsupported routing mode');
  if(!['packet','ordinary','structured-edit'].includes(builderMode))throw Error('Unsupported builder mode');
- const limits=normalizeNativeLimits(request.limits),builderImages=registeredImages(request.builder?.images,request.workingDirectory),reviewImages=registeredImages(request.review?.images,request.workingDirectory);const state={requestHash:hash(request),phase:'routing',limits,routingMode,builderMode};await deps.checkpoint(state);
+ const limits=normalizeNativeLimits(request.limits),builderImages=await validateRegisteredImages(request.builder?.images,request.workingDirectory),reviewImages=await validateRegisteredImages(request.review?.images,request.workingDirectory);const state={requestHash:hash(request),phase:'routing',limits,routingMode,builderMode};await deps.checkpoint(state);
  if(builderMode==='structured-edit'&&(limits.builder.maxRequests!==1||limits.builder.maxToolCalls!==0||!path.isAbsolute(request.builder?.outputSchema??'')||!Array.isArray(request.structuredEdit?.allowedFiles)||request.structuredEdit.allowedFiles.length<1||request.structuredEdit.allowedFiles.length>4||deps.completedBuilder))throw Error('Structured-edit mode requires one request, zero tools, an output schema and one to four registered files');
  let route;
  if(routingMode==='fixed')route=fixedSelection(request.fixedRoute);

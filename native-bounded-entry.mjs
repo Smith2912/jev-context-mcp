@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {normalizeNativeLimits} from './native-routed-runner.mjs';
+import {requireObservedSpendOptIn,validateRegisteredImages} from './native-safety.mjs';
 
 const safeId=value=>typeof value==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(value);
 const sha256=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
@@ -39,7 +40,9 @@ export async function createRegisteredLaunch({workflowId,settingsFile,outputRoot
  if(!Array.isArray(supportedExecutionProfiles)||!supportedExecutionProfiles.length||supportedExecutionProfiles.some(profile=>!allowedProfiles.has(profile)))throw Error('Registered execution profiles are invalid');
  const reviewFiles=manifest.files.filter(file=>(file.mandatory===true||file.directlyReferenced===true)&&file.acceptance!==true&&file.review!==false).map(file=>path.resolve(workingDirectory,file.path));
  if(!reviewFiles.length)throw Error('Registered workflow has no reviewable implementation source');
- const mutableFiles=registeredPaths(workingDirectory,execution.mutableFiles,{max:4}),builderImages=registeredPaths(workingDirectory,execution.builderImages),reviewImages=registeredPaths(workingDirectory,execution.reviewImages);
+ const mutableFiles=registeredPaths(workingDirectory,execution.mutableFiles,{max:4}),builderImages=await validateRegisteredImages(registeredPaths(workingDirectory,execution.builderImages,{images:true}),workingDirectory),reviewImages=await validateRegisteredImages(registeredPaths(workingDirectory,execution.reviewImages,{images:true}),workingDirectory);
+ const spendingLimitMode=execution.spendingLimitMode??'hard';if(!['hard','observed'].includes(spendingLimitMode))throw Error('Registered spending limit mode is invalid');
+ requireObservedSpendOptIn(spendingLimitMode);
  if(builderMode==='structured-edit'&&!mutableFiles.length)throw Error('Structured registered workflow requires mutableFiles');
  const maxExcerptChars=execution.maxExcerptChars??6000;if(!Number.isInteger(maxExcerptChars)||maxExcerptChars<1000||maxExcerptChars>24000)throw Error('Registered excerpt bound is invalid');
  const maxRepairs=execution.maxRepairs??1;if(!Number.isInteger(maxRepairs)||maxRepairs<0||maxRepairs>1)throw Error('Registered repair count is invalid');
@@ -51,7 +54,7 @@ export async function createRegisteredLaunch({workflowId,settingsFile,outputRoot
   request:{
    workflowId,runId,title:`Jev ${workflowId}`,contract:manifest.contract,workingDirectory,
    assignmentPrefix:'Execute only the pinned registered workflow contract. Do not expand scope or inspect unrelated files.',
-   builderMode,supportedExecutionProfiles,...(builderMode==='structured-edit'?{structuredEdit:{allowedFiles:mutableFiles}}:{}),
+   builderMode,spendingLimitMode,supportedExecutionProfiles,...(builderMode==='structured-edit'?{structuredEdit:{allowedFiles:mutableFiles}}:{}),
    maxExcerptChars,shareWithTypeSafe:true,maxRepairs,requireReviewer,outputDirectory,stateFile,sourceSessionId,sourceTurnId,
    limits:normalizeNativeLimits(execution.limits??defaultLimits),builder:{images:builderImages},
    review:{files:reviewFiles,criteria:manifest.requirements.slice(0,8),images:reviewImages}

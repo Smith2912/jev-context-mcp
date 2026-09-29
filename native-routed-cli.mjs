@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import {spawn} from 'node:child_process';
 import readline from 'node:readline';
 import {fileURLToPath} from 'node:url';
@@ -9,10 +8,12 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {collectCompletedUsage} from './benchmark-control.mjs';
 import {runNativeRoutedWorkflow} from './native-routed-runner.mjs';
+import {nativeWorkerEnvironment,nativeSessionRoot,requireObservedSpendOptIn,validateRegisteredImages} from './native-safety.mjs';
 
 const requestFile=process.argv[2];
 if(!requestFile||!path.isAbsolute(requestFile))throw Error('Absolute request JSON path required');
 const request=JSON.parse(await fs.readFile(requestFile,'utf8'));
+requireObservedSpendOptIn(request.spendingLimitMode);
 if(!request.stateFile||!path.isAbsolute(request.stateFile))throw Error('Absolute stateFile required');
 request.outputDirectory??=path.dirname(request.stateFile);
 request.review??={};
@@ -28,7 +29,7 @@ const writeState=async state=>{
  const temp=request.stateFile+'.tmp';await fs.writeFile(temp,JSON.stringify(state,null,2)+'\n');await fs.rename(temp,request.stateFile);
 };
 async function findSession(threadId){
- const pending=[path.join(os.homedir(),'.codex','sessions')];
+ const pending=[nativeSessionRoot()];
  while(pending.length){const directory=pending.pop();for(const entry of await fs.readdir(directory,{withFileTypes:true})){const full=path.join(directory,entry.name);if(entry.isDirectory())pending.push(full);else if(entry.isFile()&&entry.name.endsWith(threadId+'.jsonl'))return full;}}
  throw Error(`Session file not found for ${threadId}`);
 }
@@ -36,10 +37,10 @@ async function runCodex({kind,prompt,cwd,model,effort,useDefaultModel,sandbox,ou
  const eventsFile=path.join(request.outputDirectory,`${kind}-events.jsonl`),stderrFile=path.join(request.outputDirectory,`${kind}-stderr.log`),lastFile=path.join(request.outputDirectory,`${kind}-last-message.txt`);
  if(!limits)throw Error(`${kind} execution limits required`);
  const args=['-a','never','exec','--json','--skip-git-repo-check','-s',sandbox,'-C',cwd,'-o',lastFile,'-c','use_memories=false','-c','generate_memories=false','-c','agents.enabled=false'];
- for(const image of images){try{await fs.access(image);args.push('-i',image);}catch{throw Error(`${kind} registered image is unavailable: ${image}`);}}
+ for(const image of await validateRegisteredImages(images,cwd))args.push('-i',image);
  if(!useDefaultModel)args.push('-m',model,'-c',`model_reasoning_effort="${effort}"`);
  if(outputSchema)args.push('--output-schema',outputSchema);args.push('-');
- const child=spawn(process.env.CODEX_CLI_PATH||'codex.exe',args,{cwd,windowsHide:true,env:{...process.env,JEV_NATIVE_CONTROLLER_CHILD:'1'},stdio:['pipe','pipe','pipe']});
+ const child=spawn(process.env.CODEX_CLI_PATH||(process.platform==='win32'?'codex.exe':'codex'),args,{cwd,windowsHide:true,env:nativeWorkerEnvironment(),stdio:['pipe','pipe','pipe']});
  const eventStream=createWriteStream(eventsFile,{encoding:'utf8'}),errorStream=createWriteStream(stderrFile,{encoding:'utf8'});
  child.stderr.pipe(errorStream);let threadId=null,eventTokens=0,startCheckpoint=Promise.resolve(),timedOut=false,toolCalls=0,limitExceeded=null,stopping=false;
  const toolTypes=new Set(['command_execution','mcp_tool_call','dynamic_tool_call','computer_tool_call','web_search','file_change']);
@@ -53,7 +54,7 @@ async function runCodex({kind,prompt,cwd,model,effort,useDefaultModel,sandbox,ou
  if(!threadId)throw Error(`${kind} did not report a thread ID`);
  const finalMessage=await fs.readFile(lastFile,'utf8'),sessionFile=await findSession(threadId),usage=await collectCompletedUsage(sessionFile,threadId);
  if(!usage.reconciled||usage.rawTokens!==eventTokens)throw Error(`${kind} usage did not reconcile`);
- return {threadId,finalMessage,usage,toolCalls,eventFile:eventsFile,stderrFile,sessionFile};
+ return {threadId,finalMessage,usage,toolCalls,eventFile:eventsFile,stderrFile,sessionFile,limitEnforcement:{requests:'post-run-accounting',rawTokens:'post-run-accounting',toolCalls:'observed-event-stop',timeout:'process-timeout',hardSpendingCeiling:false}};
 }
 
 async function loadCompletedBuilder(threadId){

@@ -17,8 +17,9 @@ export function createCachedFetch({directory,fetcher=fetch,ttlMs=86400000,maxEnt
    try{return Response.json({...await response.json(),usage:{input_tokens:0,output_tokens:0},_coalesced:true});}catch{return shared.clone();}
   }
   const work=(async()=>{
-  if(!await reserve({request,key}))return new Response('',{status:429,headers:{'x-local-limit':'true'}});
-  const response=await fetcher(url,options);
+  if(!await reserve({request,key,runId:options.reservationRunId}))return new Response('',{status:429,headers:{'x-local-limit':'true'}});
+  const {reservationRunId,...providerOptions}=options;
+  const response=await fetcher(url,providerOptions);
   if(!response.ok||!file)return response;
   const raw=await response.clone().text();if(raw.length>100000)return response;
   try{

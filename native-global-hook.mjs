@@ -32,7 +32,7 @@ try{
   const child=spawn(process.execPath,[cli,requestFile],{cwd:request.workingDirectory,windowsHide:true,detached:true,env:{...process.env,JEV_NATIVE_CONTROLLER_LAUNCH:'1'},stdio:'ignore'});
   child.unref();
  }
- output({decision:'block',reason:`Registered Jev workflow ${workflowId} accepted with fixed request, tool-call, timeout, evidence, verification, and escalation limits. Controller state: ${request.stateFile}`});
+ output({decision:'block',reason:`Registered Jev workflow ${workflowId} accepted with explicit observed-spending opt-in. Request/token ceilings are reconciled after usage; tool-call event stops, timeouts, evidence, verification and escalation controls remain active. Controller state: ${request.stateFile}`});
 }catch(error){
  pass(`Registered Jev workflow did not launch; continuing in this task with the normal Codex workflow. ${error.message}`);
 }
