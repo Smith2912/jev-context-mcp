@@ -144,7 +144,7 @@ test('structured edit applies a bounded multi-file transaction and rejects parti
  const receipt=await applyStructuredEdit({text:complete,evidence,workingDirectory:root,allowedFiles});assert.equal(receipt.files.length,2);assert.equal(receipt.totalBytes,Buffer.byteLength('export const one=10;\n')+Buffer.byteLength('export const two=20;\n'));assert.equal(await fs.readFile(one,'utf8'),'export const one=10;\n');assert.equal(await fs.readFile(two,'utf8'),'export const two=20;\n');
  await fs.writeFile(one,beforeOne);await fs.writeFile(two,beforeTwo);
  const oneChanged=JSON.stringify({edits:[{file:one,expectedSha256:sha(beforeOne),content:beforeOne},{file:two,expectedSha256:sha(beforeTwo),content:'export const two=200;\n'}],summary:'second only'});
- const repairReceipt=await applyStructuredEdit({text:oneChanged,evidence,workingDirectory:root,allowedFiles});assert.equal(repairReceipt.files.length,1);assert.equal(repairReceipt.files[0].file,two);assert.equal(await fs.readFile(one,'utf8'),beforeOne);assert.equal(await fs.readFile(two,'utf8'),'export const two=200;\n');
+ const repairReceipt=await applyStructuredEdit({text:oneChanged,evidence,workingDirectory:root,allowedFiles});assert.equal(repairReceipt.files.length,1);assert.equal(repairReceipt.files[0].file,await fs.realpath(two));assert.equal(await fs.readFile(one,'utf8'),beforeOne);assert.equal(await fs.readFile(two,'utf8'),'export const two=200;\n');
  await fs.writeFile(two,beforeTwo);const unchanged=JSON.stringify({edits:[{file:one,expectedSha256:sha(beforeOne),content:beforeOne},{file:two,expectedSha256:sha(beforeTwo),content:beforeTwo}],summary:'none'});await assert.rejects(applyStructuredEdit({text:unchanged,evidence,workingDirectory:root,allowedFiles}),/no source change/);
 });
 

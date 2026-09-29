@@ -16,10 +16,11 @@ export async function validateRegisteredImages(values,workingDirectory){
  const lexicalRoot=path.resolve(workingDirectory);
  for(const file of values){
   if(typeof file!=='string'||!path.isAbsolute(file)||!/\.(?:png|jpe?g|webp|gif)$/i.test(file))throw Error('Registered image path is invalid');
-  if(!inside(lexicalRoot,path.resolve(file)))throw Error('Registered image escapes the working directory');
  }
- const root=await fs.realpath(workingDirectory),seen=new Set(),images=[];
+ let root;try{root=await fs.realpath(workingDirectory);}catch(error){if(error.code==='ENOENT'&&values.some(file=>!inside(lexicalRoot,path.resolve(file))))throw Error('Registered image escapes the working directory');throw error;}
+ const seen=new Set(),images=[];
  for(const file of values){
+  if(!inside(lexicalRoot,path.resolve(file))&&!inside(root,path.resolve(file)))throw Error('Registered image escapes the working directory');
   const target=await fs.realpath(file);
   if(!inside(root,target))throw Error('Registered image escapes the working directory through a link');
   if(!(await fs.stat(target)).isFile())throw Error('Registered image must be a regular file');
