@@ -28,7 +28,7 @@ export function createDecisionEngine({policy, apiKey, cacheDirectory, fetcher=fe
   const schedule=fn=>new Promise((resolve,reject)=>{queue.push({fn,resolve,reject});pump();});
   function pump(){while(active<(schedulerEnabled?policy.maxConcurrency:1)&&queue.length){const x=queue.shift();active++;Promise.resolve().then(x.fn).then(x.resolve,x.reject).finally(()=>{active--;pump();});}}
   const reserve=()=>{const now=Date.now();while(times.length&&times[0]<=now-60000)times.shift();if(times.length>=policy.requestsPerMinute)return false;times.push(now);return true;};
-  const cached=createCachedFetch({directory:cacheDirectory,fetcher,namespace:digest(policy),legacy:false,reserve:async({request})=>reserve()&&(!reserveProviderRequest||await reserveProviderRequest({runId:budgetRunId,estimatedInputTokens:estimateTokens(request)}))});
+  const cached=createCachedFetch({directory:cacheDirectory,fetcher,namespace:digest(policy),legacy:false,reserve:async({request,runId})=>reserve()&&(!reserveProviderRequest||await reserveProviderRequest({runId:budgetRunId??runId,estimatedInputTokens:estimateTokens(request)}))});
   return {async evaluate({runId,state,questions,sourceHashes={},shareWithTypeSafe=false,signal}) {
     if (!runId) throw new Error('Run ID required');
     if (!shareWithTypeSafe || !apiKey) return {status:'needs_review',answers:{},receipts:[],errors:['Provider authorization or credential unavailable']};
@@ -44,7 +44,7 @@ export function createDecisionEngine({policy, apiKey, cacheDirectory, fetcher=fe
           const next=(reserved.get(runId)||0)+receipt.estimatedInputTokens;
           if(next>policy.maxProviderInputTokensPerRun)throw new Error('Conservative run input reservation exhausted');
           reserved.set(runId,next);
-          const response=await cached('https://api.typesafe.ai/v1/systemone',{method:'POST',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify(request),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(policy.timeoutMs)]):AbortSignal.timeout(policy.timeoutMs)});
+          const response=await cached('https://api.typesafe.ai/v1/systemone',{method:'POST',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify(request),reservationRunId:runId,signal:signal?AbortSignal.any([signal,AbortSignal.timeout(policy.timeoutMs)]):AbortSignal.timeout(policy.timeoutMs)});
           receipt.attempts.push({httpStatus:response.status,providerRequestId:response.headers.get('x-request-id'),localLimit:response.headers.get('x-local-limit')==='true'});
           if(response.status===429&&response.headers.get('x-local-limit')!=='true'&&attempt<policy.maxThrottleRetries){
             const retry=response.headers.get('retry-after');

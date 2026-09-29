@@ -3,8 +3,9 @@ import pathlib,json,re,tomllib,datetime,sys,uuid
 base=pathlib.Path(__file__).resolve().parent
 home=pathlib.Path.home()/'.codex'
 cfg=tomllib.loads((home/'config.toml').read_text(encoding='utf-8-sig'))
-catalog=base/'skill-catalog.json'
-old=json.loads(catalog.read_text(encoding='utf-8'))
+catalog=base/'.local/skill-catalog.json'
+template=base/'skill-catalog.json'
+old=json.loads((catalog if catalog.is_file() else template).read_text(encoding='utf-8'))
 disabled={str(pathlib.Path(s['path']).resolve()).lower() for s in cfg.get('skills',{}).get('config',[]) if s.get('enabled') is False}
 sources={s['path']:s['name'] for s in old['skills']}
 for f in (home/'skills').rglob('SKILL.md'): sources.setdefault(f.as_posix(),f.parent.name)
@@ -34,5 +35,6 @@ for source,name in sources.items():
         description=next((s['description'] for s in old['skills'] if s['path']==source),'Read the skill trigger before applying.')
     result[name]={'name':name,'description':description,'path':f.as_posix(),'modifiedNs':f.stat().st_mtime_ns}
 data={'source':'Refreshed supplied availability snapshot plus local skills and explicitly enabled cached plugins. App-only enablement may require a fresh availability snapshot.','refreshedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'skills':list(result.values())}
+catalog.parent.mkdir(parents=True,exist_ok=True)
 temp=catalog.with_suffix('.'+uuid.uuid4().hex+'.tmp');temp.write_text(json.dumps(data,indent=2,ensure_ascii=False)+'\n',encoding='utf-8');temp.replace(catalog)
 print(json.dumps({'skills':len(result),'removed':removed,'refreshedAt':data['refreshedAt']}))
